@@ -137,7 +137,7 @@
 	    nil nil nil nil nil nil red
 	    nil nil nil nil nil nil red
 	    red nil nil red red red red))
-(assert (equal (find4 *b1* 'red) 1))
+(assert (eq (find4 *b1* 'red) 1))
 (assert (equalp (find3 *b1* 'red) #(1 1 2 1 1 1 2)))
 
 (defvar *b2*)
@@ -154,6 +154,19 @@
 (assert (not (find4 *b2* 'blue)))
 (assert (equalp (find3 *b2* 'blue) #(0 0 0 0 1 1 0)))
 
+(defvar *b3*)
+(setf *b3* (make-board
+	    nil nil nil nil nil nil nil
+	    nil nil nil nil nil nil nil
+	    red nil nil blu nil nil nil
+	    nil red blu blu nil nil nil
+	    nil blu red blu nil nil nil
+	    blu blu blu red nil nil nil))
+(assert (eq (find4 *b3* 'red) 1))
+(assert (eq (find4 *b3* 'blu) 1))
+
+
+	    
 (defun board-rank (board good-chip bad-chip &optional (weight-win-loss))
   (let ((rank 0))
     ;if bad-chip wins, return loss
@@ -192,13 +205,13 @@
   (do-possible-moves (i board)
     (let ((board (copy-array board)))
       (place board i good-chip nil)
-      (if (equal 'win (board-rank board good-chip bad-chip))
+      (if (eq 'win (board-rank board good-chip bad-chip))
 	  (return-from get-move i))))
   ;block opponent if can lose
   (do-possible-moves (i board)
     (let ((board (copy-array board)))
       (place board i bad-chip nil)
-      (if (equal 'loss (board-rank board good-chip bad-chip))
+      (if (eq 'loss (board-rank board good-chip bad-chip))
 	  (return-from get-move i))))
   (let ((out (make-array (array-dimension board 1) :initial-element nil)))
     (do-possible-moves (i board)
@@ -217,7 +230,7 @@
     (let ((move (cons nil -1)))
       (dotimes (i (array-dimension board 1) (cdr move))
 	(awhen (aref out i)
-	  (if (equal (cdr move) -1)
+	  (if (eq (cdr move) -1)
 	      (setf move (cons it i))
 	      (when (> it (car move))
 		(setf move (cons it i)))))))))
