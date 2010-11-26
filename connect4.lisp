@@ -1,3 +1,28 @@
+(defmacro! acond (&rest clauses)
+ "works just like cond, but stores the 
+  value of each condition as 'it', which is accessable in the code
+  following the condition"
+    (if clauses
+	(let ((cl1 (car clauses)))
+	  `(let ((,g!sym ,(car cl1)))
+	     (if ,g!sym
+		 (let ((it ,g!sym)) 
+		   (declare (ignorable it)) 
+		   ,@(cdr cl1))
+		 (acond ,@(cdr clauses)))))))
+
+;this macro has been tweaked from the one in server.lisp
+(defmacro! with-time (time &body body)
+  "executes body in 'time' seconds; time is intended to be longer than it should take to execute body"
+  `(let* ((,g!start (get-internal-real-time))
+	  (,g!finish (+ (* ,time internal-time-units-per-second) ,g!start))
+	  (,g!time-to-sleep))
+     ,@body
+     (setf ,g!time-to-sleep (/ (- ,g!finish (get-internal-real-time)) internal-time-units-per-second))
+     (if (< ,g!time-to-sleep 0)
+	 (format nil "lagging behind by ~a seconds~%" (coerce (abs ,g!time-to-sleep) 'double-float))
+	 (sleep ,g!time-to-sleep))))
+
 (defun group (lst num)
   (let ((out) (group))
     (dotimes (i (length lst) out)
@@ -40,10 +65,21 @@
 	(return-from next i))))
 
 (defun place (board col chip &optional (verbose t))
-  (awhen (next (get-col board col))
-    (setf (aref board it col) chip)
-    (if verbose
-	(print-board board))))
+  (acond ((next (get-col board col))
+	  (setf (aref board it col) chip)
+	  (if verbose (print-board board))
+	  t)
+	 (t
+	  nil)))
+
+(defun attempt-place (board col chip &optional (verbose t))
+  (attempt
+   (progn
+     (if (not (find col (list 0 1 2 3 4 5 6)))
+	 (return-from attempt-place nil))
+     (if (not (place board col chip verbose))
+	 (return-from attempt-place nil))
+     t)))
 
 (defun find4-hor (board chip)
   (let ((out 0))
@@ -164,8 +200,6 @@
 	    blu blu blu red nil nil nil))
 (assert (eq (find4 *b3* 'red) 1))
 (assert (eq (find4 *b3* 'blu) 1))
-
-
 	    
 (defun board-rank (board good-chip bad-chip &optional (weight-win-loss))
   (let ((rank 0))
@@ -234,25 +268,57 @@
 	      (setf move (cons it i))
 	      (when (> it (car move))
 		(setf move (cons it i)))))))))
-  	   
-(defvar *board* (make-array '(6 7) :initial-element nil))
 
-(defmacro! with-time (time &body body)
-  "executes body in 'time' seconds; time is intended to be longer than it should take to execute body"
-  `(let* ((,g!start (get-internal-real-time))
-	  (,g!finish (+ (* ,time internal-time-units-per-second) ,g!start))
-	  (,g!time-to-sleep))
-     ,@body
-     (setf ,g!time-to-sleep (/ (- ,g!finish (get-internal-real-time)) internal-time-units-per-second))
-     (if (< ,g!time-to-sleep 0)
-	 (format t "lagging behind by ~a seconds~%" (coerce (abs ,g!time-to-sleep) 'double-float))
-	 (sleep ,g!time-to-sleep))))
+(defun finished-p (board)
+  (do-possible-moves (i board t)
+    (return-from finished-p nil)))
+
+(defmacro make-game (&optional (player1-human-player-p t) (player2-human-player-p t))
+  `(let* ((board (make-array '(6 7) :initial-element  nil))
+	  (player1 (make-player :human-player-p ,player1-human-player-p :chip 'red))
+	  (player2 (make-player :human-player-p ,player2-human-player-p :chip 'blue))
+	  (current player1)
+	  (toggle (lambda () (if (eq current player1) player2 player1))))
+     (defpun game () (board player1 player2 current toggle)
+       (cond ((finished-p board)
+	      (quit))
+	     ((find4 board (get-pandoric player1 'chip))
+	      (format t "~a wins!~%" (get-pandoric player1 'chip))
+	      (quit))
+	     ((find4 board (get-pandoric player2 'chip))
+	      (format t "~a wins!~%" (get-pandoric player2 'chip))
+	      (quit))
+	     (t
+	      (funcall current)
+	      (setf current (funcall toggle)))))))
+
+(defmacro make-player (&key (human-player-p t) (chip))
+  `(plambda () ((chip ,chip)
+		(human-player-p ,human-player-p))
+     (if human-player-p
+	 (while (not (attempt-place
+		      (get-pandoric 'game 'board)
+		      (progn
+			(format t "enter move for ~a:~%" chip)
+			(attempt (eval (read))))
+		      chip)))
+	 (place (get-pandoric 'game 'board)
+		(get-move board chip (get-pandoric (funcall (get-pandoric 'game 'toggle)) 'chip))
+		chip))))
+
+(make-game (progn
+	     (format t "player1 human-player-p?~%")
+	     (eval (read)))
+	   (progn
+	     (format t "player2 human-player-p?~%")
+	     (eval (read))))
+
+(print-board (get-pandoric 'game 'board))
 
 (defun connect4 ()
   "go for it.. connect4!"
   (while t
     (with-time (/ 1 60)
-      (if (listen) (format t "~a~%" (attempt (eval (read))))))))
-
+      (funcall 'game))))
 
 
