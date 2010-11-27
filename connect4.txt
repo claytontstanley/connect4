@@ -1,2 +1,5 @@
-file2load= connect4.lisp
+#file2load= terminfo.lisp
+file2load= connect4.fasl
+file2load= shelisp.lisp
 albumBuilder= #'connect4
+maxTime=5

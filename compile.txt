@@ -1,0 +1,2 @@
+file2load= connect4.lisp
+albumBuilder= #'compile-connect4

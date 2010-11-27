@@ -23,6 +23,11 @@
 	 (format nil "lagging behind by ~a seconds~%" (coerce (abs ,g!time-to-sleep) 'double-float))
 	 (sleep ,g!time-to-sleep))))
 
+(defmacro! return-time (&body body)
+  `(let* ((,g!start (get-internal-real-time)))
+     ,@body
+     (/ (- (get-internal-real-time) ,g!start) internal-time-units-per-second)))
+
 (defun group (lst num)
   (let ((out) (group))
     (dotimes (i (length lst) out)
@@ -233,41 +238,80 @@
        (dotimes (,varsym (array-dimension ,g!board 1) ,(if (consp ret) (car ret) ret))
 	 (when (aref ,g!moves ,varsym)
 	   ,@body)))))
+	    
+(defpun toggle () ((chip))
+  (format t "toggling from ~a~%" chip)
+  (if (eq chip 'bad-chip)
+      (setf chip 'good-chip)
+      (setf chip 'bad-chip))
+  chip)
 
-(defun get-move (board good-chip bad-chip)
-  ;check for win; if can win, then play there
-  (do-possible-moves (i board)
-    (let ((board (copy-array board)))
-      (place board i good-chip nil)
-      (if (eq 'win (board-rank board good-chip bad-chip))
-	  (return-from get-move i))))
-  ;block opponent if can lose
-  (do-possible-moves (i board)
-    (let ((board (copy-array board)))
-      (place board i bad-chip nil)
-      (if (eq 'loss (board-rank board good-chip bad-chip))
-	  (return-from get-move i))))
-  (let ((out (make-array (array-dimension board 1) :initial-element nil)))
-    (do-possible-moves (i board)
-      (let ((board (copy-array board)))
-	(place board i good-chip nil)
-	(setf (aref out i)
-	      (do-possible-moves (i board (sum 0))
-		(let ((board (copy-array board)))
-		  (place board i bad-chip nil)
-		  (incf sum
-			(do-possible-moves (i board (sum 0))
-			  (let ((board (copy-array board)))
-			    (place board i good-chip nil)
-			    (incf sum (board-rank board good-chip bad-chip t))))))))))
-    (format t "board rank: ~a~%" out)
-    (let ((move (cons nil -1)))
-      (dotimes (i (array-dimension board 1) (cdr move))
-	(awhen (aref out i)
-	  (if (eq (cdr move) -1)
-	      (setf move (cons it i))
-	      (when (> it (car move))
-		(setf move (cons it i)))))))))
+(defmacro search-expander (depth)
+  (if (eq depth 0)
+      `(board-rank board good-chip bad-chip t)
+      `(do-possible-moves (i board (sum 0))
+	 (let ((board (copy-array board)))
+	   (place board i ,(toggle) nil)
+	   (incf sum
+		 (cond
+		   ((or (find4 board good-chip)
+			(find4 board bad-chip))
+		    (board-rank board good-chip bad-chip t))
+		   (t
+		    (search-expander ,(- depth 1)))))))))
+
+(defmacro! get-move (o!board o!good-chip o!bad-chip)
+  `(let ((move)
+	 (cnt 0)
+	 (maxTime (eval-object (get-matching-line (get-pandoric 'args 'configFileWdLST) "maxTime="))))
+     (while (and
+	     (fboundp (symb `get-move- cnt))
+	     (< (return-time
+		 (format t "searching at depth ~a~%" cnt)
+		 (setf move (funcall (symb 'get-move- cnt) ,g!board ,g!good-chip ,g!bad-chip)))
+	       maxTime))
+       (incf cnt))
+     move))
+   
+(defmacro get-move-builder (depth)
+  `(defun ,(symb 'get-move- depth) (board good-chip bad-chip)
+     ;check for win; if can win, then play there
+     (do-possible-moves (i board)
+       (let ((board (copy-array board)))
+	 (place board i good-chip nil)
+	 (if (eq 'win (board-rank board good-chip bad-chip))
+	     (return-from ,(symb 'get-move- depth) i))))
+     ;block opponent if can lose
+     (do-possible-moves (i board)
+       (let ((board (copy-array board)))
+	 (place board i bad-chip nil)
+	 (if (eq 'loss (board-rank board good-chip bad-chip))
+	     (return-from ,(symb 'get-move- depth) i))))
+     (let ((out (make-array (array-dimension board 1) :initial-element nil)))
+       (do-possible-moves (i board)
+	 (let ((board (copy-array board)))
+	   (place board i good-chip nil)
+	   (setf (aref out i)
+		 (search-expander ,depth))))
+       (format t "board rank: ~a~%" out)
+       (let ((move (cons nil -1)))
+	 (dotimes (i (array-dimension board 1) (cdr move))
+	   (awhen (aref out i)
+	     (if (eq (cdr move) -1)
+		 (setf move (cons it i))
+		 (when (> it (car move))
+		   (setf move (cons it i))))))))))
+
+(defmacro build-get-moves (depth)
+  (format t "building at depth ~a~%" depth)
+  (setf (get-pandoric 'toggle 'chip) 'good-chip)
+  (if (eq depth 0)
+      `(get-move-builder ,depth)
+      `(progn
+	 (get-move-builder ,depth)
+	 (build-get-moves ,(- depth 1)))))
+
+(build-get-moves 50)
 
 (defun finished-p (board)
   (do-possible-moves (i board t)
@@ -276,7 +320,7 @@
 (defmacro make-game (&optional (player1-human-player-p t) (player2-human-player-p t))
   `(let* ((board (make-array '(6 7) :initial-element  nil))
 	  (player1 (make-player :human-player-p ,player1-human-player-p :chip 'red))
-	  (player2 (make-player :human-player-p ,player2-human-player-p :chip 'blue))
+	  (player2 (make-player :human-player-p ,player2-human-player-p :chip 'yellow))
 	  (current player1)
 	  (toggle (lambda () (if (eq current player1) player2 player1))))
      (defpun game () (board player1 player2 current toggle)
@@ -306,19 +350,37 @@
 		(get-move board chip (get-pandoric (funcall (get-pandoric 'game 'toggle)) 'chip))
 		chip))))
 
-(make-game (progn
-	     (format t "player1 human-player-p?~%")
-	     (eval (read)))
-	   (progn
-	     (format t "player2 human-player-p?~%")
-	     (eval (read))))
-
-(print-board (get-pandoric 'game 'board))
-
 (defun connect4 ()
   "go for it.. connect4!"
+  (make-game (progn
+	       (format t "player1 human-player-p?~%")
+	       (eval (read)))
+	     (progn
+	       (format t "player2 human-player-p?~%")
+	       (eval (read))))
+  (print-board (get-pandoric 'game 'board))
   (while t
     (with-time (/ 1 60)
       (funcall 'game))))
+
+(defun compile-connect4 ()
+  (compile-file "connect4.lisp" :output-file "connect4.fasl"))
+
+#|(defmacro output-in-color (str color)
+  `(progn
+     ;(script "tput setaf 0; tput setab 7")
+     (script (format nil "tput setaf ~a" ,color))
+     (format t "~a~%" ,str)
+     (script "tput op")))|#
+
+ #| (script
+   (format nil "tput setaf 0;tput setab 7; echo \"`tput setaf ~a` ~a `tput setaf 7`\"; tput op"
+	   color
+	   str)))|#
+
+
+#|(defun connect4 ()
+  (while t
+    (format t "~a~%" (attempt (eval (read))))))|#
 
 
