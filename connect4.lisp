@@ -1,15 +1,26 @@
+(defun group (source n)
+  "paul graham's group"
+  (if (zerop n) (error "zero length"))
+  (labels ((rec (source acc)
+             (let ((rest (nthcdr n source)))
+               (if (consp rest)
+                   (rec rest (cons
+                               (subseq source 0 n)
+                               acc))
+                   (nreverse
+                     (cons source acc))))))
+    (if source (rec source nil) nil)))
+
 (defmacro! acond (&rest clauses)
- "works just like cond, but stores the 
-  value of each condition as 'it', which is accessable in the code
-  following the condition"
-    (if clauses
-	(let ((cl1 (car clauses)))
-	  `(let ((,g!sym ,(car cl1)))
-	     (if ,g!sym
-		 (let ((it ,g!sym)) 
-		   (declare (ignorable it)) 
-		   ,@(cdr cl1))
-		 (acond ,@(cdr clauses)))))))
+  "paul graham's acond, and then tweaked a bit"
+  (if clauses
+      (let ((cl1 (car clauses)))
+	`(let ((,g!sym ,(car cl1)))
+	   (if ,g!sym
+	       (let ((it ,g!sym)) 
+		 (declare (ignorable it)) 
+		 ,@(cdr cl1))
+	       (acond ,@(cdr clauses)))))))
 
 (defmacro! dotimes-reverse ((i n &optional result) &body body)
   `(let ((,i)
@@ -17,6 +28,44 @@
      (dotimes (,g!iForward ,g!n ,result)
        (setf ,i (- ,g!n ,g!iForward 1))
        ,@body)))
+
+(defun copy-array (array)
+  (let ((dims (array-dimensions array)))
+    (adjust-array
+     (make-array dims :displaced-to array)
+     dims)))
+
+;///////////////////////////////////
+;printing colored text to the terminal
+(defun get-color (val)
+  (cond ((eq val 'red) 1)
+	((eq val 'yellow) 3)
+	((eq val 'green) 2)
+	(t 0)))
+
+(defmacro in-color (str color)
+  `(format nil "`tput setaf ~a`~a`tput setaf 7`" (get-color ,color) ,str))
+
+(defun in-colors (words)
+  (let ((out))
+    (dolist (word words)
+      (push-to-end (in-color (car word) (cdr word)) out))
+    (make-sentence out :spaceDesignator "")))
+
+(defun print-colored-line (words)
+  "prints a line of colored words to the terminal
+   each word is a dotted pair; car is the word (as a string); cdr is the color (as a symb)
+   words is a list of word dotted pairs"
+  (let ((lns (format nil 
+		     (script
+		      (fast-concatenate 
+		       (format nil "echo \"~a\"; " (in-colors words))
+		       "tput op")))))
+    (dolist (ln (get-lines lns))
+      (format t "~a " ln))
+    (format t "~%")))
+;end printing colored text to the terminal
+;///////////////////////////////////
 
 ;this macro has been tweaked from the one in server.lisp
 (defmacro! with-time (time &body body)
@@ -34,44 +83,11 @@
   `(let* ((,g!start (get-internal-real-time)))
      ,@body
      (/ (- (get-internal-real-time) ,g!start) internal-time-units-per-second)))
-
-(defun group (lst num)
-  (let ((out) (group))
-    (dotimes (i (length lst) out)
-      (push-to-end (nth i lst) group)
-      (when (eq (+ 1 (mod i num)) num)
-	(push-to-end group out)
-	(setf group nil)))))
       
 (defmacro make-board (&rest args)
   (if (not args) 
       `(make-array '(6 7) :initial-element nil)
       `(make-array '(6 7) :initial-contents (reverse (group (list ,@(mapcar (lambda (x) `',x) args)) 7)))))
-
-(defun get-color (val)
-  (cond ((eq val 'red) 1)
-	((eq val 'yellow) 3)
-	((eq val 'green) 2)
-	(t 0)))
-
-(defmacro in-color (str color)
-  `(format nil "`tput setaf ~a`~a`tput setaf 7`" (get-color ,color) ,str))
-
-(defun in-colors (words)
-  (let ((out))
-    (dolist (word words)
-      (push-to-end (in-color (car word) (cdr word)) out))
-    (make-sentence out :spaceDesignator "")))
-
-(defun print-colored-line (words)
-  (let ((lns (format nil 
-		     (script
-		      (fast-concatenate 
-		       (format nil "echo \"~a\"; " (in-colors words))
-		       "tput op")))))
-    (dolist (ln (get-lines lns))
-      (format t "~a " ln))
-    (format t "~%")))
 
 (defun print-board (board)
   (format t "~{~8A~}~%" (list 0 1 2 3 4 5 6))
@@ -85,12 +101,6 @@
       (print-colored-line line))
     (format t "~%")))
 		   
-(defun copy-array (array)
-  (let ((dims (array-dimensions array)))
-    (adjust-array
-     (make-array dims :displaced-to array)
-     dims)))
-
 (defun get-row (board row)
   (let ((out (make-array (array-dimension board 1) :initial-element nil)))
     (dotimes (i (array-dimension board 1) out)
@@ -118,6 +128,15 @@
 	  t)
 	 (t
 	  nil)))
+
+(defun attempt-place (board col chip &optional (verbose t))
+  (attempt
+   (progn
+     (if (not (find col (list 0 1 2 3 4 5 6)))
+	 (return-from attempt-place nil))
+     (if (not (place board col chip verbose))
+	 (return-from attempt-place nil))
+     t)))
 
 (defun unplace (board col &optional (chip) (verbose t))
   (acond ((curr (get-col board col))
@@ -152,15 +171,6 @@
   `(do-possible-moves (,col ,board ,out)
      (with-placement (,board ,col ,chip)
        ,@body)))
-
-(defun attempt-place (board col chip &optional (verbose t))
-  (attempt
-   (progn
-     (if (not (find col (list 0 1 2 3 4 5 6)))
-	 (return-from attempt-place nil))
-     (if (not (place board col chip verbose))
-	 (return-from attempt-place nil))
-     t)))
 
 (defun find4-hor (board chip)
   (let ((out 0))
@@ -242,6 +252,8 @@
     (with-possible-placements (board i chip out)
       (setf (aref out i) (reduce #'+ (find3 board chip))))))
 
+;/////////////////////////////////////
+;testing
 (defvar *b1*)
 (setf *b1* (make-board
 	    nil nil nil nil nil nil nil
@@ -277,6 +289,8 @@
 	    yellow yellow yellow red nil nil nil))
 (assert (eq (find4 *b3* 'red) 1))
 (assert (eq (find4 *b3* 'yellow) 1))
+;end testing
+;/////////////////////////////////////
 	    
 (defun board-rank (board good-chip bad-chip &optional (depth 0) (weight-win-loss))
   (let ((rank 0))
@@ -319,24 +333,6 @@
 		 (t
 		  (search-expander ,(toggle chip 'good-chip 'bad-chip) ,(- depth 1) ,maxDepth)))))))
 
-(defmacro! get-move (o!board o!good-chip o!bad-chip)
-  `(let ((move) (last) (mv) (lt) 
-	 (cnt 0)
-	 (maxTime (eval-object (get-matching-line (get-pandoric 'args 'configFileWdLST) "maxTime="))))
-     (while (and
-	     (fboundp (symb `get-move- cnt))
-	     (< (return-time
-		 (format t "searching at depth ~a~%" cnt)
-		 (multiple-value-setq (mv lt) (funcall (symb 'get-move- cnt) ,g!board ,g!good-chip ,g!bad-chip))
-		 (push mv move)
-		 (push lt last))
-	       maxTime)
-	     (if (> (length last) 10)
-		 (not (equalp (first last) (second last)))
-		 t))
-       (incf cnt))
-     (first move)))
-
 (defun find-guarantee (board good-chip bad-chip chip depth)
   (cond	((eq 'win (board-rank board good-chip bad-chip)) 'win)
 	((eq 'loss (board-rank board good-chip bad-chip)) 'loss)
@@ -371,7 +367,7 @@
 			   (setf (nth i out) (list 'loss ,cnt i))))
 		       (t (error "shouldn't have gotten here"))))
 	       (t (search-expander-2 ,(cons next-any-all depth-lst) ,depth ,(+ cnt 1) ,(toggle win-loss 'win 'loss)))))))
-   
+
 (defmacro get-move-builder (depth)
   (let ((fun (symb 'get-move- depth)))
     `(defun ,fun (board good-chip bad-chip)
@@ -425,6 +421,24 @@
 
 (build-get-moves 25)
 
+(defmacro! get-move (o!board o!good-chip o!bad-chip)
+  `(let ((move) (last) (mv) (lt) 
+	 (cnt 0)
+	 (maxTime (eval-object (get-matching-line (get-pandoric 'args 'configFileWdLST) "maxTime="))))
+     (while (and
+	     (fboundp (symb `get-move- cnt))
+	     (< (return-time
+		 (format t "searching at depth ~a~%" cnt)
+		 (multiple-value-setq (mv lt) (funcall (symb 'get-move- cnt) ,g!board ,g!good-chip ,g!bad-chip))
+		 (push mv move)
+		 (push lt last))
+	       maxTime)
+	     (if (> (length last) 10)
+		 (not (equalp (first last) (second last)))
+		 t))
+       (incf cnt))
+     (first move)))
+   
 (defun finished-p (board)
   (do-possible-moves (i board t)
     (return-from finished-p nil)))
