@@ -371,23 +371,7 @@
 			   (setf (nth i out) (list 'loss ,cnt i))))
 		       (t (error "shouldn't have gotten here"))))
 	       (t (search-expander-2 ,(cons next-any-all depth-lst) ,depth ,(+ cnt 1) ,(toggle win-loss 'win 'loss)))))))
-
-                  
-                ;don't play on tiles where opponent has a win afterwards
-	     #|((eq (find-guarantee board good-chip bad-chip good-chip nil nil)))
-               ((eq (find-guarantee board good-chip bad-chip good-chip (list 'any)) 'loss)
-		(format t "not playing ~a b/c opponent can win on next move~%" i)
-		(setf (aref out i) nil))
-	        ;if the move means that no matter what the opponent does, we have a win, then do it
-	       ((eq (find-guarantee board good-chip bad-chip good-chip (list 'all 'any)) 'win)
-		(format t "playing ~a for the win on second move~%" i)
-		(unplace board i good-chip nil)
-		(return-from ,(symb 'get-move- depth) i))
-	        ;if the move gives the opponent a move that, no matter what we do, the opponent wins, then don't do it
-	       ((eq (find-guarantee board good-chip bad-chip good-chip (list 'any 'all 'any)) 'loss)
-		(format t "not playing ~a b/c opponent can win on second move~%" i)
-		(setf (aref out i) nil))))|#
-     
+   
 (defmacro get-move-builder (depth)
   (let ((fun (symb 'get-move- depth)))
     `(defun ,fun (board good-chip bad-chip)

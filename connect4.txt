@@ -1,4 +1,4 @@
 file2load= shelisp.lisp
 file2load= connect4.fasl
 albumBuilder= #'connect4
-maxTime=5
+maxTime=1
