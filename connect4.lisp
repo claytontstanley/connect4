@@ -11,6 +11,13 @@
 		   ,@(cdr cl1))
 		 (acond ,@(cdr clauses)))))))
 
+(defmacro! dotimes-reverse ((i n &optional result) &body body)
+  `(let ((,i)
+	 (,g!n ,n))
+     (dotimes (,g!iForward ,g!n ,result)
+       (setf ,i (- ,g!n ,g!iForward 1))
+       ,@body)))
+
 ;this macro has been tweaked from the one in server.lisp
 (defmacro! with-time (time &body body)
   "executes body in 'time' seconds; time is intended to be longer than it should take to execute body"
@@ -40,19 +47,49 @@
   (if (not args) 
       `(make-array '(6 7) :initial-element nil)
       `(make-array '(6 7) :initial-contents (reverse (group (list ,@(mapcar (lambda (x) `',x) args)) 7)))))
+
+(defun get-color (val)
+  (cond ((eq val 'red) 1)
+	((eq val 'yellow) 3)
+	((eq val 'green) 2)
+	(t 0)))
+
+(defmacro in-color (str color)
+  `(format nil "`tput setaf ~a`~a`tput setaf 7`" (get-color ,color) ,str))
+
+(defun in-colors (words)
+  (let ((out))
+    (dolist (word words)
+      (push-to-end (in-color (car word) (cdr word)) out))
+    (make-sentence out :spaceDesignator "")))
+
+(defun print-colored-line (words)
+  (let ((lns (format nil 
+		     (script
+		      (fast-concatenate 
+		       (format nil "echo \"~a\"; " (in-colors words))
+		       "tput op")))))
+    (dolist (ln (get-lines lns))
+      (format t "~a " ln))
+    (format t "~%")))
+
+(defun print-board (board)
+  (format t "~{~8A~}~%" (list 0 1 2 3 4 5 6))
+  (dotimes-reverse (i (array-dimension board 0))
+    (let ((line))
+      (dotimes (j (array-dimension board 1))
+	(push-to-end (cons
+		      (format nil "~8A" (aref board i j))
+		      (aref board i j))
+		     line))
+      (print-colored-line line))
+    (format t "~%")))
 		   
 (defun copy-array (array)
   (let ((dims (array-dimensions array)))
     (adjust-array
      (make-array dims :displaced-to array)
      dims)))
-
-(defun print-board (board)
-  (format t "~{~8A~}~%" (list 0 1 2 3 4 5 6))
-  (dotimes (i (array-dimension board 0))
-    (dotimes (j (array-dimension board 1))
-      (format t "~8A" (aref board (- (array-dimension board 0) i 1) j)))
-    (format t "~%")))
 
 (defun get-row (board row)
   (let ((out (make-array (array-dimension board 1) :initial-element nil)))
@@ -69,6 +106,11 @@
     (if (not (aref arr i))
 	(return-from next i))))
 
+(defun curr (arr)
+  (dotimes-reverse (i (array-dimension arr 0) nil)
+    (if (aref arr i)
+	(return-from curr i))))
+
 (defun place (board col chip &optional (verbose t))
   (acond ((next (get-col board col))
 	  (setf (aref board it col) chip)
@@ -76,6 +118,40 @@
 	  t)
 	 (t
 	  nil)))
+
+(defun unplace (board col &optional (chip) (verbose t))
+  (acond ((curr (get-col board col))
+	  (if chip (assert (eq chip (aref board it col))))
+	  (setf (aref board it col) nil)
+	  (if verbose (print-board board))
+	  t)
+	 (t
+	  nil)))
+
+(defmacro! with-placement ((board col% chip%) &body body)
+  `(let ((,g!chip ,chip%)
+	 (,g!col ,col%))
+     (place ,board ,g!col ,g!chip nil)
+     ,@body
+     (unplace ,board ,g!col ,g!chip nil)))
+
+(defun get-possible-moves (board)
+  (let ((out (make-array (array-dimension board 1) :initial-element nil)))
+    (dotimes (i (array-dimension board 1) out)
+      (if (not (aref board (- (array-dimension board 0) 1) i))
+	  (setf (aref out i) t)))))
+
+(defmacro! do-possible-moves ((varsym board &optional ret) &body body)
+  `(let ,(remove-if-not #'consp (list ret))
+     (let* ((,g!moves (get-possible-moves ,board)))
+       (dotimes (,varsym (array-dimension ,board 1) ,(if (consp ret) (car ret) ret))
+	 (when (aref ,g!moves ,varsym)
+	   ,@body)))))
+
+(defmacro with-possible-placements ((board col chip &optional (out)) &body body)
+  `(do-possible-moves (,col ,board ,out)
+     (with-placement (,board ,col ,chip)
+       ,@body)))
 
 (defun attempt-place (board col chip &optional (verbose t))
   (attempt
@@ -157,18 +233,14 @@
 
 (defun find3 (board chip)
   (let ((out (make-array (array-dimension board 1) :initial-element 0)))
-    (dotimes (i (array-dimension board 1) out)
-      (let ((board (copy-array board)))
-	(place board i chip nil)
-	(aif (find4 board chip)
-	     (setf (aref out i) it))))))
+    (with-possible-placements (board i chip out)
+      (aif (find4 board chip)
+	   (setf (aref out i) it)))))
 
 (defun find2 (board chip)
-  (let ((out (make-array (array-dimension board 1) :initial-element nil)))
-    (dotimes (i (array-dimension board 1) out)
-      (let ((board (copy-array board)))
-	(place board i chip nil)
-	(setf (aref out i) (reduce #'+ (find3 board chip)))))))
+  (let ((out (make-array (array-dimension board 1) :initial-element 0)))
+    (with-possible-placements (board i chip out)
+      (setf (aref out i) (reduce #'+ (find3 board chip))))))
 
 (defvar *b1*)
 (setf *b1* (make-board
@@ -186,132 +258,188 @@
 	    nil nil nil  nil  nil nil nil
 	    nil nil nil  nil  nil nil nil
 	    nil nil nil  nil  nil nil nil
-	    nil nil nil  nil  blue nil nil
-	    nil nil red  blue blue nil nil
-	    nil red blue blue blue nil nil))
+	    nil nil nil  nil  yellow nil nil
+	    nil nil red  yellow yellow nil nil
+	    nil red yellow yellow yellow nil nil))
 (assert (not (find4 *b2* 'red)))
 (assert (equalp (find3 *b2* 'red) #(0 0 0 0 0 0 0)))
 (assert (equalp (find2 *b2* 'red) #(0 0 0 1 1 0 0)))
-(assert (not (find4 *b2* 'blue)))
-(assert (equalp (find3 *b2* 'blue) #(0 0 0 0 1 1 0)))
+(assert (not (find4 *b2* 'yellow)))
+(assert (equalp (find3 *b2* 'yellow) #(0 0 0 0 1 1 0)))
 
 (defvar *b3*)
 (setf *b3* (make-board
 	    nil nil nil nil nil nil nil
 	    nil nil nil nil nil nil nil
-	    red nil nil blu nil nil nil
-	    nil red blu blu nil nil nil
-	    nil blu red blu nil nil nil
-	    blu blu blu red nil nil nil))
+	    red nil nil yellow nil nil nil
+	    nil red yellow yellow nil nil nil
+	    nil yellow red yellow nil nil nil
+	    yellow yellow yellow red nil nil nil))
 (assert (eq (find4 *b3* 'red) 1))
-(assert (eq (find4 *b3* 'blu) 1))
+(assert (eq (find4 *b3* 'yellow) 1))
 	    
-(defun board-rank (board good-chip bad-chip &optional (weight-win-loss))
+(defun board-rank (board good-chip bad-chip &optional (depth 0) (weight-win-loss))
   (let ((rank 0))
     ;if bad-chip wins, return loss
     (aif (find4 board bad-chip)
 	 (if (not weight-win-loss)
 	     (return-from board-rank 'loss)
-	     (incf rank (* -200 it))))
+	     (incf rank (* -20000 it))))
     ;if good-chip wins, return win
     (aif (find4 board good-chip)
 	 (if (not weight-win-loss)
 	     (return-from board-rank 'win)
-	     (incf rank (* 200 it))))
+	     (incf rank (* 20000 it))))
     ;otherwise, add all the goods, and subtract all the bads
     (incf rank
 	  (+ (* (reduce #'+ (find3 board good-chip)) 20)
 	     (* (reduce #'+ (find2 board good-chip)) 2)
 	     (* (reduce #'+ (find3 board bad-chip)) -20)
-	     (* (reduce #'+ (find2 board bad-chip)) -2)))))
+	     (* (reduce #'+ (find2 board bad-chip)) -2)))
+    ;attentuate by the current depth of the board
+    (/ rank (+ 1 depth))))
 
-(defun get-possible-moves (board)
-  (let ((out (make-array (array-dimension board 1) :initial-element nil)))
-    (dotimes (i (array-dimension board 1) out)
-      (if (not (aref board (- (array-dimension board 0) 1) i))
-	  (setf (aref out i) t)))))
+(defun toggle (chip good-chip bad-chip)
+  ;(format t "toggling from ~a between ~a & ~a~%" chip good-chip bad-chip)
+  (assert (or (eq chip good-chip) (eq chip bad-chip)))
+  (assert (not (eq good-chip bad-chip)))
+  (if (eq chip bad-chip)
+      good-chip
+      bad-chip))
 
-(defmacro! do-possible-moves ((varsym board% &optional ret) &body body)
-  `(let ,(remove-if-not #'consp (list ret))
-     (let* ((,g!board ,board%)
-	    (,g!moves (get-possible-moves ,g!board)))
-       (dotimes (,varsym (array-dimension ,g!board 1) ,(if (consp ret) (car ret) ret))
-	 (when (aref ,g!moves ,varsym)
-	   ,@body)))))
-	    
-(defpun toggle () ((chip))
-  (format t "toggling from ~a~%" chip)
-  (if (eq chip 'bad-chip)
-      (setf chip 'good-chip)
-      (setf chip 'bad-chip))
-  chip)
-
-(defmacro search-expander (depth)
+(defmacro search-expander (chip depth maxDepth)
   (if (eq depth 0)
-      `(board-rank board good-chip bad-chip t)
-      `(do-possible-moves (i board (sum 0))
-	 (let ((board (copy-array board)))
-	   (place board i ,(toggle) nil)
-	   (incf sum
-		 (cond
-		   ((or (find4 board good-chip)
-			(find4 board bad-chip))
-		    (board-rank board good-chip bad-chip t))
-		   (t
-		    (search-expander ,(- depth 1)))))))))
+      `(board-rank board good-chip bad-chip ,(- maxDepth depth) t)
+      `(with-possible-placements (board i ,(toggle chip 'good-chip 'bad-chip) (sum 0))
+	 (incf sum
+	       (cond
+		 ((or (find4 board good-chip)
+		      (find4 board bad-chip))
+		  (board-rank board good-chip bad-chip ,(- maxDepth depth) t))
+		 (t
+		  (search-expander ,(toggle chip 'good-chip 'bad-chip) ,(- depth 1) ,maxDepth)))))))
 
 (defmacro! get-move (o!board o!good-chip o!bad-chip)
-  `(let ((move)
+  `(let ((move) (last) (mv) (lt) 
 	 (cnt 0)
 	 (maxTime (eval-object (get-matching-line (get-pandoric 'args 'configFileWdLST) "maxTime="))))
      (while (and
 	     (fboundp (symb `get-move- cnt))
 	     (< (return-time
 		 (format t "searching at depth ~a~%" cnt)
-		 (setf move (funcall (symb 'get-move- cnt) ,g!board ,g!good-chip ,g!bad-chip)))
-	       maxTime))
+		 (multiple-value-setq (mv lt) (funcall (symb 'get-move- cnt) ,g!board ,g!good-chip ,g!bad-chip))
+		 (push mv move)
+		 (push lt last))
+	       maxTime)
+	     (if (> (length last) 10)
+		 (not (equalp (first last) (second last)))
+		 t))
        (incf cnt))
-     move))
-   
+     (first move)))
+
+(defun find-guarantee (board good-chip bad-chip chip depth)
+  (cond	((eq 'win (board-rank board good-chip bad-chip)) 'win)
+	((eq 'loss (board-rank board good-chip bad-chip)) 'loss)
+	((null depth) nil)
+	(t (let ((out))
+	     (with-possible-placements (board i (toggle chip good-chip bad-chip))
+	       (push (find-guarantee board good-chip bad-chip (toggle chip good-chip bad-chip) (rest depth)) out))
+	     (cond ((eq (car depth) 'any)
+		    (cond ((null out) nil)
+			  ((member 'win out) 'win)
+			  ((member 'loss out) 'loss)
+			  (t nil)))
+		   ((eq (car depth) 'all)
+		    (cond ((null out) nil)
+			  ((null (remove-if (lambda (x) (eq x 'win)) out)) 'win)
+			  ((null (remove-if (lambda (x) (eq x 'loss)) out)) 'loss)
+			  (t nil)))
+		   (t (error "shouldn't get here")))))))
+
+(defmacro search-expander-2 (depth-lst depth cnt win-loss)
+  (let ((next-any-all (aif depth-lst (toggle (car it) 'any 'all) 'any)))
+    (format t "~a with depth-lst ~a~%" win-loss depth-lst)
+    (if (not (eq cnt depth))
+	`(cond ((eq (find-guarantee board good-chip bad-chip good-chip ',depth-lst) ',win-loss)
+		,(cond ((eq win-loss 'win)
+			`(progn
+			   (format t "count ~a, col ~a: playing for the win~%" ,cnt i)
+			   (setf (nth i out) (list 'win ,cnt i))))
+		       ((eq win-loss 'loss)
+			`(progn
+			   (format t "count ~a, col ~a: not playing b/c opponent can win~%" ,cnt i)
+			   (setf (nth i out) (list 'loss ,cnt i))))
+		       (t (error "shouldn't have gotten here"))))
+	       (t (search-expander-2 ,(cons next-any-all depth-lst) ,depth ,(+ cnt 1) ,(toggle win-loss 'win 'loss)))))))
+
+                  
+                ;don't play on tiles where opponent has a win afterwards
+	     #|((eq (find-guarantee board good-chip bad-chip good-chip nil nil)))
+               ((eq (find-guarantee board good-chip bad-chip good-chip (list 'any)) 'loss)
+		(format t "not playing ~a b/c opponent can win on next move~%" i)
+		(setf (aref out i) nil))
+	        ;if the move means that no matter what the opponent does, we have a win, then do it
+	       ((eq (find-guarantee board good-chip bad-chip good-chip (list 'all 'any)) 'win)
+		(format t "playing ~a for the win on second move~%" i)
+		(unplace board i good-chip nil)
+		(return-from ,(symb 'get-move- depth) i))
+	        ;if the move gives the opponent a move that, no matter what we do, the opponent wins, then don't do it
+	       ((eq (find-guarantee board good-chip bad-chip good-chip (list 'any 'all 'any)) 'loss)
+		(format t "not playing ~a b/c opponent can win on second move~%" i)
+		(setf (aref out i) nil))))|#
+     
 (defmacro get-move-builder (depth)
-  `(defun ,(symb 'get-move- depth) (board good-chip bad-chip)
-     ;check for win; if can win, then play there
-     (do-possible-moves (i board)
-       (let ((board (copy-array board)))
-	 (place board i good-chip nil)
-	 (if (eq 'win (board-rank board good-chip bad-chip))
-	     (return-from ,(symb 'get-move- depth) i))))
-     ;block opponent if can lose
-     (do-possible-moves (i board)
-       (let ((board (copy-array board)))
-	 (place board i bad-chip nil)
-	 (if (eq 'loss (board-rank board good-chip bad-chip))
-	     (return-from ,(symb 'get-move- depth) i))))
-     (let ((out (make-array (array-dimension board 1) :initial-element nil)))
-       (do-possible-moves (i board)
-	 (let ((board (copy-array board)))
-	   (place board i good-chip nil)
-	   (setf (aref out i)
-		 (search-expander ,depth))))
-       (format t "board rank: ~a~%" out)
-       (let ((move (cons nil -1)))
-	 (dotimes (i (array-dimension board 1) (cdr move))
-	   (awhen (aref out i)
-	     (if (eq (cdr move) -1)
-		 (setf move (cons it i))
-		 (when (> it (car move))
-		   (setf move (cons it i))))))))))
+  (let ((fun (symb 'get-move- depth)))
+    `(defun ,fun (board good-chip bad-chip)
+       (let ((out (make-list (array-dimension board 1) :initial-element nil))
+	     (move (cons nil -1)))
+	 (with-possible-placements (board i good-chip)
+	   (setf (nth i out) t))
+	 (with-possible-placements (board i good-chip)
+	   (search-expander-2 nil ,depth -1 win))
+	 (format t "board absolutes: ~a~%" out)
+         ;if there is a win -> take the one with the shortest count
+	 (aif (remove-if-not (lambda (x) (and (consp x) (eq (first x) 'win))) out)
+	      (return-from ,fun (third (car (sort it (lambda (x y) (< (second x) (second y))))))))
+         ;if there are all bad moves -> take the one with the longest count
+	 (if (not (member t out))
+	     (let ((it (remove-if-not (lambda (x) (and (consp x) (eq (first x) 'loss))) out)))
+	       (return-from ,fun (third (car (sort it (lambda (x y) (> (second x) (second y)))))))))
+         ;change all bad moves to nil
+	 (setf out (mapcar (lambda (x) (if (consp x) nil x)) out))
+	 ;if there is only one move -> do it
+	 (if (eq (length (remove-if-not (lambda (x) (eq x t)) out)) 1)
+	     (return-from ,fun (- (length out) (length (member t out)))))
+	 (format t "board absolutes: ~a~%" out)
+         ;otherwise, look into the future...
+	 (with-possible-placements (board i good-chip)
+	   (when (nth i out)
+	     (setf (nth i out)
+		   (search-expander good-chip ,depth ,depth))))
+	 (format t "board rank: ")
+	 (dotimes (i (array-dimension board 1) (format t "~%"))
+	   (if (numberp (nth i out))
+	       (format t "~,5f " (coerce (nth i out) 'double-float))
+	       (format t "~a " (nth i out))))
+         ;and play at the best location
+	 (do-possible-moves (i board)
+	   (if (eq (cdr move) -1)
+	       (setf move (cons (nth i out) i))
+	       (awhen (nth i out)
+		 (when (or (null (car move))
+			   (> it (car move)))
+		   (setf move (cons it i))))))
+	 (values (cdr move) out)))))
 
 (defmacro build-get-moves (depth)
   (format t "building at depth ~a~%" depth)
-  (setf (get-pandoric 'toggle 'chip) 'good-chip)
-  (if (eq depth 0)
-      `(get-move-builder ,depth)
-      `(progn
-	 (get-move-builder ,depth)
-	 (build-get-moves ,(- depth 1)))))
+  ;(setf (get-pandoric 'toggle 'chip) 'good-chip)
+  `(progn
+     (get-move-builder ,depth)
+     ,(when (> depth 0)
+	    `(build-get-moves ,(- depth 1)))))
 
-(build-get-moves 50)
+(build-get-moves 25)
 
 (defun finished-p (board)
   (do-possible-moves (i board t)
@@ -365,22 +493,9 @@
 
 (defun compile-connect4 ()
   (compile-file "connect4.lisp" :output-file "connect4.fasl"))
-
-#|(defmacro output-in-color (str color)
-  `(progn
-     ;(script "tput setaf 0; tput setab 7")
-     (script (format nil "tput setaf ~a" ,color))
-     (format t "~a~%" ,str)
-     (script "tput op")))|#
-
- #| (script
-   (format nil "tput setaf 0;tput setab 7; echo \"`tput setaf ~a` ~a `tput setaf 7`\"; tput op"
-	   color
-	   str)))|#
-
-
+       
 #|(defun connect4 ()
   (while t
-    (format t "~a~%" (attempt (eval (read))))))|#
+    (format nil "~a~%" (attempt (eval (read))))))|#
 
 

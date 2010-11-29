@@ -1,8 +1,8 @@
-all: unitTest
+all: connect4
 
 compile:
 	sbcl --noinform --noprint --disable-debugger --load letf.lisp nil compile.txt nil
 
-unitTest:
+connect4:
 	sbcl --noinform --noprint --disable-debugger --load letf.lisp nil connect4.txt nil
 
