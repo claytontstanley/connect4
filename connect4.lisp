@@ -23,6 +23,7 @@
 	       (acond ,@(cdr clauses)))))))
 
 (defmacro! dotimes-reverse ((i n &optional result) &body body)
+  "works like dotimes, except that i is bound in reverse (from highest to zero)"
   `(let ((,i)
 	 (,g!n ,n))
      (dotimes (,g!iForward ,g!n ,result)
@@ -30,6 +31,7 @@
        ,@body)))
 
 (defun copy-array (array)
+  "copies an array; found code in the wild; seems to work fine"
   (let ((dims (array-dimensions array)))
     (adjust-array
      (make-array dims :displaced-to array)
@@ -67,29 +69,29 @@
 ;end printing colored text to the terminal
 ;///////////////////////////////////
 
+(defmacro! return-time (&body body)
+  "evaluates body, and returns time (in seconds) it took to evaluate body"
+  `(let ((,g!start (get-internal-real-time)))
+     ,@body
+     (/ (- (get-internal-real-time) ,g!start) internal-time-units-per-second)))
+
 ;this macro has been tweaked from the one in server.lisp
 (defmacro! with-time (time &body body)
   "executes body in 'time' seconds; time is intended to be longer than it should take to execute body"
-  `(let* ((,g!start (get-internal-real-time))
-	  (,g!finish (+ (* ,time internal-time-units-per-second) ,g!start))
-	  (,g!time-to-sleep))
-     ,@body
-     (setf ,g!time-to-sleep (/ (- ,g!finish (get-internal-real-time)) internal-time-units-per-second))
+  `(let ((,g!time-to-sleep))
+     (setf ,g!time-to-sleep (- ,time (return-time ,@body)))
      (if (< ,g!time-to-sleep 0)
 	 (format nil "lagging behind by ~a seconds~%" (coerce (abs ,g!time-to-sleep) 'double-float))
 	 (sleep ,g!time-to-sleep))))
 
-(defmacro! return-time (&body body)
-  `(let* ((,g!start (get-internal-real-time)))
-     ,@body
-     (/ (- (get-internal-real-time) ,g!start) internal-time-units-per-second)))
-      
 (defmacro make-board (&rest args)
+  "creates a connect4 board; creates a nil board if args is empty; otherwise populates board with args"
   (if (not args) 
       `(make-array '(6 7) :initial-element nil)
-      `(make-array '(6 7) :initial-contents (reverse (group (list ,@(mapcar (lambda (x) `',x) args)) 7)))))
+      `(make-array '(6 7) :initial-contents (reverse (group ',args 7)))))
 
 (defun print-board (board)
+  "prints board to terminal in color"
   (format t "~{~8A~}~%" (list 0 1 2 3 4 5 6))
   (dotimes-reverse (i (array-dimension board 0))
     (let ((line))
@@ -102,34 +104,39 @@
     (format t "~%")))
 		   
 (defun get-row (board row)
+  "gets fresh row slice of board"
   (let ((out (make-array (array-dimension board 1) :initial-element nil)))
     (dotimes (i (array-dimension board 1) out)
       (setf (aref out i) (aref board row i)))))
 
 (defun get-col (board col)
+  "gets fresh col slice of board"
   (let ((out (make-array (array-dimension board 0) :initial-element nil)))
     (dotimes (i (array-dimension board 0) out)
       (setf (aref out i) (aref board i col)))))
     
 (defun next (arr)
+  "gets row after highest chip on column arr"
   (dotimes (i (array-dimension arr 0) nil)
     (if (not (aref arr i))
 	(return-from next i))))
 
 (defun curr (arr)
+  "gets row of highest chip on column arr"
   (dotimes-reverse (i (array-dimension arr 0) nil)
     (if (aref arr i)
 	(return-from curr i))))
 
 (defun place (board col chip &optional (verbose t))
-  (acond ((next (get-col board col))
-	  (setf (aref board it col) chip)
-	  (if verbose (print-board board))
-	  t)
-	 (t
-	  nil)))
+  "places chip on column col on board"
+  (awhen (next (get-col board col))
+    (setf (aref board it col) chip)
+    (if verbose (print-board board))
+    t))
 
 (defun attempt-place (board col chip &optional (verbose t))
+  "attempts to place chip on board
+   if an invalid move, board will not be changed and nil is returned"
   (attempt
    (progn
      (if (not (find col (list 0 1 2 3 4 5 6)))
@@ -139,17 +146,17 @@
      t)))
 
 (defun unplace (board col &optional (chip) (verbose t))
-  (acond ((curr (get-col board col))
-	  (if chip (assert (eq chip (aref board it col))))
-	  (setf (aref board it col) nil)
-	  (if verbose (print-board board))
-	  t)
-	 (t
-	  nil)))
+  "takes off highest chip on column col on board"
+  (awhen (curr (get-col board col))
+    (if chip (assert (eq chip (aref board it col))))
+    (setf (aref board it col) nil)
+    (if verbose (print-board board))
+    t))
 
-(defmacro! with-placement ((board col% chip%) &body body)
-  `(let ((,g!chip ,chip%)
-	 (,g!col ,col%))
+(defmacro! with-placement ((chip col board) &body body)
+  "body is evaluated in an environment where chip has been placed on col on board"
+  `(let ((,g!chip ,chip)
+	 (,g!col ,col))
      (place ,board ,g!col ,g!chip nil)
      ,@body
      (unplace ,board ,g!col ,g!chip nil)))
@@ -161,15 +168,18 @@
 	  (setf (aref out i) t)))))
 
 (defmacro! do-possible-moves ((varsym board &optional ret) &body body)
-  `(let ,(remove-if-not #'consp (list ret))
-     (let* ((,g!moves (get-possible-moves ,board)))
-       (dotimes (,varsym (array-dimension ,board 1) ,(if (consp ret) (car ret) ret))
-	 (when (aref ,g!moves ,varsym)
-	   ,@body)))))
+  "a constrained dotimes; will only evaluate body for i's that are columns on board that are possible moves"
+  `(let ((,g!moves (get-possible-moves ,board)))
+     (dotimes (,varsym (array-dimension ,board 1) ,ret)
+       (when (aref ,g!moves ,varsym)
+	 ,@body))))
 
-(defmacro with-possible-placements ((board col chip &optional (out)) &body body)
-  `(do-possible-moves (,col ,board ,out)
-     (with-placement (,board ,col ,chip)
+(defmacro with-possible-placements ((chip varsym board &optional ret) &body body)
+  "a macro combination of above macros
+   for each possible move, evaluate body in an environment where that move is made 
+   varsym is visible to body"
+  `(do-possible-moves (,varsym ,board ,ret)
+     (with-placement (,chip ,varsym ,board)
        ,@body)))
 
 (defun find4-hor (board chip)
@@ -243,13 +253,13 @@
 
 (defun find3 (board chip)
   (let ((out (make-array (array-dimension board 1) :initial-element 0)))
-    (with-possible-placements (board i chip out)
+    (with-possible-placements (chip i board out)
       (aif (find4 board chip)
 	   (setf (aref out i) it)))))
 
 (defun find2 (board chip)
   (let ((out (make-array (array-dimension board 1) :initial-element 0)))
-    (with-possible-placements (board i chip out)
+    (with-possible-placements (chip i board out)
       (setf (aref out i) (reduce #'+ (find3 board chip))))))
 
 ;/////////////////////////////////////
@@ -295,15 +305,15 @@
 (defun board-rank (board good-chip bad-chip &optional (depth 0) (weight-win-loss))
   (let ((rank 0))
     ;if bad-chip wins, return loss
-    (aif (find4 board bad-chip)
-	 (if (not weight-win-loss)
-	     (return-from board-rank 'loss)
-	     (incf rank (* -20000 it))))
+    (awhen (find4 board bad-chip)
+      (if (not weight-win-loss)
+	  (return-from board-rank 'loss)
+	  (incf rank (* -20000 it))))
     ;if good-chip wins, return win
-    (aif (find4 board good-chip)
-	 (if (not weight-win-loss)
-	     (return-from board-rank 'win)
-	     (incf rank (* 20000 it))))
+    (awhen (find4 board good-chip)
+      (if (not weight-win-loss)
+	  (return-from board-rank 'win)
+	  (incf rank (* 20000 it))))
     ;otherwise, add all the goods, and subtract all the bads
     (incf rank
 	  (+ (* (reduce #'+ (find3 board good-chip)) 20)
@@ -324,21 +334,19 @@
 (defmacro search-expander (chip depth maxDepth)
   (if (eq depth 0)
       `(board-rank board good-chip bad-chip ,(- maxDepth depth) t)
-      `(with-possible-placements (board i ,(toggle chip 'good-chip 'bad-chip) (sum 0))
-	 (incf sum
-	       (cond
-		 ((or (find4 board good-chip)
-		      (find4 board bad-chip))
-		  (board-rank board good-chip bad-chip ,(- maxDepth depth) t))
-		 (t
-		  (search-expander ,(toggle chip 'good-chip 'bad-chip) ,(- depth 1) ,maxDepth)))))))
+      `(let ((sum 0))
+	 (with-possible-placements (,(toggle chip 'good-chip 'bad-chip) i board sum)
+	   (incf sum (cond ((or (find4 board good-chip) (find4 board bad-chip))
+			    (board-rank board good-chip bad-chip ,(- maxDepth depth) t))
+			   (t
+			    (search-expander ,(toggle chip 'good-chip 'bad-chip) ,(- depth 1) ,maxDepth))))))))
 
 (defun find-guarantee (board good-chip bad-chip chip depth)
   (cond	((eq 'win (board-rank board good-chip bad-chip)) 'win)
 	((eq 'loss (board-rank board good-chip bad-chip)) 'loss)
 	((null depth) nil)
 	(t (let ((out))
-	     (with-possible-placements (board i (toggle chip good-chip bad-chip))
+	     (with-possible-placements ((toggle chip good-chip bad-chip) i board)
 	       (push (find-guarantee board good-chip bad-chip (toggle chip good-chip bad-chip) (rest depth)) out))
 	     (cond ((eq (car depth) 'any)
 		    (cond ((null out) nil)
@@ -350,7 +358,7 @@
 			  ((null (remove-if (lambda (x) (eq x 'win)) out)) 'win)
 			  ((null (remove-if (lambda (x) (eq x 'loss)) out)) 'loss)
 			  (t nil)))
-		   (t (error "shouldn't get here")))))))
+		   (t (error "shouldn't have gotten here")))))))
 
 (defmacro search-expander-2 (depth-lst depth cnt win-loss)
   (let ((next-any-all (aif depth-lst (toggle (car it) 'any 'all) 'any)))
@@ -373,9 +381,9 @@
     `(defun ,fun (board good-chip bad-chip)
        (let ((out (make-list (array-dimension board 1) :initial-element nil))
 	     (move (cons nil -1)))
-	 (with-possible-placements (board i good-chip)
+	 (with-possible-placements (good-chip i board)
 	   (setf (nth i out) t))
-	 (with-possible-placements (board i good-chip)
+	 (with-possible-placements (good-chip i board)
 	   (search-expander-2 nil ,depth -1 win))
 	 (format t "board absolutes: ~a~%" out)
          ;if there is a win -> take the one with the shortest count
@@ -392,7 +400,7 @@
 	     (return-from ,fun (- (length out) (length (member t out)))))
 	 (format t "board absolutes: ~a~%" out)
          ;otherwise, look into the future...
-	 (with-possible-placements (board i good-chip)
+	 (with-possible-placements (good-chip i board)
 	   (when (nth i out)
 	     (setf (nth i out)
 		   (search-expander good-chip ,depth ,depth))))
@@ -413,7 +421,6 @@
 
 (defmacro build-get-moves (depth)
   (format t "building at depth ~a~%" depth)
-  ;(setf (get-pandoric 'toggle 'chip) 'good-chip)
   `(progn
      (get-move-builder ,depth)
      ,(when (> depth 0)
@@ -421,23 +428,23 @@
 
 (build-get-moves 25)
 
-(defmacro! get-move (o!board o!good-chip o!bad-chip)
-  `(let ((move) (last) (mv) (lt) 
-	 (cnt 0)
-	 (maxTime (eval-object (get-matching-line (get-pandoric 'args 'configFileWdLST) "maxTime="))))
-     (while (and
-	     (fboundp (symb `get-move- cnt))
-	     (< (return-time
-		 (format t "searching at depth ~a~%" cnt)
-		 (multiple-value-setq (mv lt) (funcall (symb 'get-move- cnt) ,g!board ,g!good-chip ,g!bad-chip))
-		 (push mv move)
-		 (push lt last))
+(defun get-move (board good-chip bad-chip)
+  (let ((move) (last) (mv) (lt) 
+	(cnt 0)
+	(maxTime (eval-object (get-matching-line (get-pandoric 'args 'configFileWdLST) "maxTime="))))
+    (while (and
+	    (fboundp (symb `get-move- cnt))
+	    (< (return-time
+		(format t "searching at depth ~a~%" cnt)
+		(multiple-value-setq (mv lt) (funcall (symb 'get-move- cnt) board good-chip bad-chip))
+		(push mv move)
+		(push lt last))
 	       maxTime)
-	     (if (> (length last) 10)
-		 (not (equalp (first last) (second last)))
-		 t))
-       (incf cnt))
-     (first move)))
+	    (if (> (length last) 10)
+		(not (equalp (first last) (second last)))
+		t))
+      (incf cnt))
+    (first move)))
    
 (defun finished-p (board)
   (do-possible-moves (i board t)
