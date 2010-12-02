@@ -22,6 +22,7 @@
 		 ,@(cdr cl1))
 	       (acond ,@(cdr clauses)))))))
 
+;FIXME; needs to parse body for forms & decls, but I have to figure out how to pass env in to do this
 (defmacro! dotimes-reverse ((i n &optional result) &body body)
   "works like dotimes, except that i is bound in reverse (from highest to zero)"
   `(let ((,i)
