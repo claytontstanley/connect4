@@ -261,46 +261,6 @@
   (let ((out (make-array (array-dimension board 1) :initial-element 0)))
     (with-possible-placements (chip i board out)
       (setf (aref out i) (reduce #'+ (find3 board chip))))))
-
-;/////////////////////////////////////
-;testing
-(defvar *b1*)
-(setf *b1* (make-board
-	    nil nil nil nil nil nil nil
-	    nil nil nil nil nil nil nil
-	    nil nil nil nil nil nil nil
-	    nil nil nil nil nil nil red
-	    nil nil nil nil nil nil red
-	    red nil nil red red red red))
-(assert (eq (find4 *b1* 'red) 1))
-(assert (equalp (find3 *b1* 'red) #(1 1 2 1 1 1 2)))
-
-(defvar *b2*)
-(setf *b2* (make-board
-	    nil nil nil  nil  nil nil nil
-	    nil nil nil  nil  nil nil nil
-	    nil nil nil  nil  nil nil nil
-	    nil nil nil  nil  yellow nil nil
-	    nil nil red  yellow yellow nil nil
-	    nil red yellow yellow yellow nil nil))
-(assert (not (find4 *b2* 'red)))
-(assert (equalp (find3 *b2* 'red) #(0 0 0 0 0 0 0)))
-(assert (equalp (find2 *b2* 'red) #(0 0 0 1 1 0 0)))
-(assert (not (find4 *b2* 'yellow)))
-(assert (equalp (find3 *b2* 'yellow) #(0 0 0 0 1 1 0)))
-
-(defvar *b3*)
-(setf *b3* (make-board
-	    nil nil nil nil nil nil nil
-	    nil nil nil nil nil nil nil
-	    red nil nil yellow nil nil nil
-	    nil red yellow yellow nil nil nil
-	    nil yellow red yellow nil nil nil
-	    yellow yellow yellow red nil nil nil))
-(assert (eq (find4 *b3* 'red) 1))
-(assert (eq (find4 *b3* 'yellow) 1))
-;end testing
-;/////////////////////////////////////
 	    
 (defun board-rank (board good-chip bad-chip &optional (depth 0) (weight-win-loss))
   (let ((rank 0))
@@ -332,6 +292,9 @@
       bad-chip))
 
 (defmacro search-expander (chip depth maxDepth)
+  "recursive macro that generates code that returns the rank of the board
+   depth defines how many moves to look ahead when determining the quality of the board
+   board must be defined, and there are all sorts of other intentional variable capture/injections here"
   (if (eq depth 0)
       `(board-rank board good-chip bad-chip ,(- maxDepth depth) t)
       `(let ((sum 0))
@@ -342,6 +305,15 @@
 			    (search-expander ,(toggle chip 'good-chip 'bad-chip) ,(- depth 1) ,maxDepth))))))))
 
 (defun find-guarantee (board good-chip bad-chip chip depth)
+  "helper function for search-expander-2; recurses on depth, which is a list of 'any and 'all
+   'any looks to find at least one 'win or 'loss when making the next move
+   'all looks to find where no matter what the next move is, 'win or 'loss is returned
+   This allows you to say things like: 
+   [1] if the next move is a win -> nil
+   [2] if the next move allows the opponent to win -> (list 'any)
+   [3] if the next move means that for all opponent moves afterward, there is a way to win on the next move (list 'all 'any)
+   [4] if the next move means that, there is an opponent's move that, for all of our moves afterward, there is a way for the opponent to win (list 'any 'all 'any)
+   [5] etc..."
   (cond	((eq 'win (board-rank board good-chip bad-chip)) 'win)
 	((eq 'loss (board-rank board good-chip bad-chip)) 'loss)
 	((null depth) nil)
@@ -361,6 +333,9 @@
 		   (t (error "shouldn't have gotten here")))))))
 
 (defmacro search-expander-2 (depth-lst depth cnt win-loss)
+  "recursive macro that generates code that finds moves that guarantee either wins or losses
+   if a guaranteed win/loss is found, then it updates 'out', that is already initialized
+   all sorts of intentional variable capture/injections here too"
   (let ((next-any-all (aif depth-lst (toggle (car it) 'any 'all) 'any)))
     (format t "~a with depth-lst ~a~%" win-loss depth-lst)
     (if (not (eq cnt depth))
@@ -377,6 +352,7 @@
 	       (t (search-expander-2 ,(cons next-any-all depth-lst) ,depth ,(+ cnt 1) ,(toggle win-loss 'win 'loss)))))))
 
 (defmacro get-move-builder (depth)
+  "defines a get-move function that looks up to depth future moves to determine the next move"
   (let ((fun (symb 'get-move- depth)))
     `(defun ,fun (board good-chip bad-chip)
        (let ((out (make-list (array-dimension board 1) :initial-element nil))
@@ -429,6 +405,11 @@
 (build-get-moves 25)
 
 (defun get-move (board good-chip bad-chip)
+  "wrapper function that calls get-moves functions
+   will start with get-move-0, then if that call is returned
+   fast enough, will call get-move-1, and keep incrementing the 
+   depth until a call takes too long; then stops, and returns
+   the move found from calling that last get-moves function"
   (let ((move) (last) (mv) (lt) 
 	(cnt 0)
 	(maxTime (eval-object (get-matching-line (get-pandoric 'args 'configFileWdLST) "maxTime="))))
@@ -451,6 +432,9 @@
     (return-from finished-p nil)))
 
 (defmacro make-game (&optional (player1-human-player-p t) (player2-human-player-p t))
+  "defines a game object that is a lexical pandoric closure
+   calling the closure makes the next player make a move on the board
+   the game is advanced by repeatedly calling this closure"
   `(let* ((board (make-array '(6 7) :initial-element  nil))
 	  (player1 (make-player :human-player-p ,player1-human-player-p :chip 'red))
 	  (player2 (make-player :human-player-p ,player2-human-player-p :chip 'yellow))
@@ -470,6 +454,8 @@
 	      (setf current (funcall toggle)))))))
 
 (defmacro make-player (&key (human-player-p t) (chip))
+  "defines a player object that is a lexical pandoric closure
+   calling the closure makes the player make a move on the board"
   `(plambda () ((chip ,chip)
 		(human-player-p ,human-player-p))
      (if human-player-p
@@ -498,9 +484,4 @@
 
 (defun compile-connect4 ()
   (compile-file "connect4.lisp" :output-file "connect4.fasl"))
-       
-#|(defun connect4 ()
-  (while t
-    (format nil "~a~%" (attempt (eval (read))))))|#
-
-
+      
