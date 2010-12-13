@@ -11,17 +11,6 @@
                      (cons source acc))))))
     (if source (rec source nil) nil)))
 
-(defmacro! acond (&rest clauses)
-  "paul graham's acond, and then tweaked a bit"
-  (if clauses
-      (let ((cl1 (car clauses)))
-	`(let ((,g!sym ,(car cl1)))
-	   (if ,g!sym
-	       (let ((it ,g!sym)) 
-		 (declare (ignorable it)) 
-		 ,@(cdr cl1))
-	       (acond ,@(cdr clauses)))))))
-
 ;FIXME; needs to parse body for forms & decls, but I have to figure out how to pass env in to do this
 (defmacro! dotimes-reverse ((i n &optional result) &body body)
   "works like dotimes, except that i is bound in reverse (from highest to zero)"
