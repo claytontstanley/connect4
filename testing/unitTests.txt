@@ -1,4 +1,4 @@
 file2load= connect4.lisp
-file2load= unitTestFramework.lisp
+file2load= ../Lisp-Unit-Testing-Framework/unitTestFramework.lisp
 file2load= unitTests.lisp
 albumBuilder= #'test-connect4

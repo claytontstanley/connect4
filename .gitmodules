@@ -1,0 +1,6 @@
+[submodule "LETF"]
+	path = LETF
+	url = git://github.com/claytontstanley/LETF.git
+[submodule "Lisp-Unit-Testing-Framework"]
+	path = Lisp-Unit-Testing-Framework
+	url = git://github.com/claytontstanley/Lisp-Unit-Testing-Framework.git
